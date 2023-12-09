@@ -59,6 +59,8 @@ async function run() {
 
     const reviewCollection = client.db('parlourDB').collection('reviews')
     const usersCollection = client.db("parlourDB").collection("users");
+    const paymentCollection = client.db("parlourDB").collection("payments");
+    const cartCollection = client.db("parlourDB").collection("carts");
 
     app.post("/jwt", (req, res) =>{
       const user = req.body;
@@ -126,6 +128,30 @@ async function run() {
       const result = await usersCollection.deleteOne(query);
       res.send(result);
     })
+    app.post('/carts', async(req, res) =>{
+      const item = req.body;
+      const result = await cartCollection.insertOne(item);
+      res.send(result);
+    } )
+    app.get('/carts', verifyJWT, async(req, res) =>{
+      const email = req.query.email;
+      if(!email){
+        res.send([])
+      }
+      const decodedEmail = req.decoded.email;
+      if(email !== decodedEmail){
+        res.status(403).send({error:true, message:'forbidden access'})
+      }
+      const query = {email:email};
+      const result = await cartCollection.find(query).toArray()
+      res.send(result)
+    })
+    app.delete('/carts/:id', async(req, res) =>{
+      const id = req.params.id;
+      const query = {_id: new ObjectId(id)};
+      const result = await cartCollection.deleteOne(query)
+      res.send(result)
+    })
 
     app.get('/review', async (req, res) =>{
         const result = await reviewCollection.find().toArray();
@@ -145,6 +171,26 @@ async function run() {
       res.send({
         clientSecret:paymentIntent.client_secret
       })
+    })
+    app.get('/payments/:email', verifyToken, async(req, res) =>{
+      const query = {email: req.params.email}
+      if(req.params.email !== req.decoded.email){
+        return res.status(403).send({message:'forbidden access'})
+      }
+      const result = await paymentCollection.find(query).toArray()
+      res.send(result)
+    })
+    app.post('/payments', async (req, res) =>{
+      const payment = req.body;
+      const paymentResult = await paymentCollection.insertOne(payment)
+      console.log('paymentInfo', payment);
+      const query = {
+        _id:{
+          $in: payment.cartIds.map(id => new ObjectId(id))
+        }
+      }
+      const deleteResult = await cartCollection.deleteMany(query)
+      res.send({paymentResult, deleteResult})
     })
 
     await client.connect();
