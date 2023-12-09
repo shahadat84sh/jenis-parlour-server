@@ -1,4 +1,5 @@
 const express = require('express');
+const stripe = require('stripe')(process.env.STRIPE_KEY);
 const cors = require('cors');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express()
@@ -9,6 +10,7 @@ const port = process.env.PORT || 5000;
 // middleware
 app.use(cors())
 app.use(express.json());
+
 const verifyJWT = (req, res, next) =>{
   const authorization = req.headers.authorization;
   if(!authorization){
@@ -18,6 +20,20 @@ const verifyJWT = (req, res, next) =>{
   jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) =>{
     if(err){
       return res.status(402).send({error:true, message:"Unauthorized user access"})
+    }
+    req.decoded = decoded;
+    next()
+  })
+}
+
+const verifyToken = ( req, res, next ) =>{
+  if(!req.headers.authorization){
+    return res.status(401).send({message:'unauthorized access'})
+  }
+  const token = req.headers.authorization.split(" ")[1];
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) =>{
+    if(err){
+      return res.status(401).send({message:'unauthorized access'})
     }
     req.decoded = decoded;
     next()
@@ -51,19 +67,7 @@ async function run() {
       })
       res.send({token})
     })
-    const verifyToken = ( req, res, next ) =>{
-      if(!req.headers.authorization){
-        return res.status(401).send({message:'unauthorized access'})
-      }
-      const token = req.headers.authorization.split(" ")[1];
-      jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) =>{
-        if(err){
-          return res.status(401).send({message:'unauthorized access'})
-        }
-        req.decoded = decoded;
-        next()
-      })
-    }
+
     const verifyAdmin = async (req, res, next) =>{
       const email = req.decoded.email;
       const query = {email: email}
@@ -74,7 +78,7 @@ async function run() {
       }
       next()
     }
-    app.get('/users', verifyToken, verifyAdmin,  async(req, res) =>{
+    app.get('/users', verifyJWT, verifyAdmin,  async(req, res) =>{
       const result = await usersCollection.findOne().toArray()
       res.send(result);
     })
@@ -94,18 +98,15 @@ async function run() {
      * firstlayer verifyJWT
      * secondly email? == same
      */
-    app.get('/users/admin/:email', verifyToken, async( req, res ) =>{
+    app.get('/users/admin/:email', verifyJWT, async( req, res ) =>{
       const email = req.params.email;
       if(req.decoded.email !== email){
-        res.status(403).send({message:'forbidden access'})
+        res.send({admin:false})
       }
       const query = {email: email};
       const user = await usersCollection.findOne(query)
-      let admin = false;
-      if(user){
-        admin = user?.role === 'admin'
-      }
-      res.send({ admin })
+      const result = {admin: user?.role == "admin"}
+      res.send({ result })
     })
 
     app.patch("/users/admin/:id", verifyToken, verifyAdmin, async (req, res) =>{
@@ -129,6 +130,21 @@ async function run() {
     app.get('/review', async (req, res) =>{
         const result = await reviewCollection.find().toArray();
         res.send(result);
+    })
+
+    // payment related info
+    app.post('create-payment-intent', async(req,res) =>{
+      const {price} = req.body;
+      const amount = parseInt(price *100);
+      console.log(amount, 'amount inside the intent');
+      const paymentIntent = await stripe.paymentIntent.create({
+        amount:amount,
+        currency: 'usd',
+        payment_method_types:['card']
+      });
+      res.send({
+        clientSecret:paymentIntent.client_secret
+      })
     })
 
     await client.connect();
